@@ -1,0 +1,68 @@
+server:
+  port: 8084
+
+spring:
+  application:
+    name: notification-service
+
+  mail:
+    host: smtp.gmail.com
+    port: 587
+    username: ${EMAIL_USERNAME}
+    password: ${EMAIL_PASSWORD}
+    properties:
+      mail:
+        smtp:
+          auth: true
+          starttls:
+            enable: true
+
+kafka:
+  bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS}
+#  bootstrap-servers: localhost:9092
+  consumer:
+    group-id: ${KAFKA_GROUP_ID}
+#    group-id: notification-group
+    auto-offset-reset: earliest
+    key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+    value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+    properties:
+      spring.json.trusted.packages: '*'
+
+#eureka:
+#  client:
+#    service-url:
+#      defaultZone: http://localhost:8761/eureka
+#    register-with-eureka: true
+#    fetch-registry: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include:
+          - health
+          - info
+          - prometheus
+  metrics:
+    export:
+      prometheus:
+        enabled: true
+  endpoint:
+    prometheus:
+      enabled: true
+
+readinessProbe:
+  httpGet:
+    path: /actuator/health
+    port: 8084
+  initialDelaySeconds: 10
+  periodSeconds: 5
+
+logging:
+  level:
+    root: INFO
+    org.hibernate.SQL: DEBUG
+    org.springframework.web: DEBUG
+    com.notification.health: DEBUG
+

@@ -1,0 +1,16 @@
+<configuration>
+
+    <conversionRule conversionWord="coloredLevel"
+                    converterClass="org.springframework.boot.logging.logback.ColorConverter"/>
+
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+            <pattern>%d{yyyy-MM-dd HH:mm:ss} %-5level [%X{trace_id},%X{span_id}] [%thread] %logger - %msg%n</pattern>
+        </encoder>
+
+    </appender>
+
+    <root level="INFO">
+        <appender-ref ref="CONSOLE"/>
+    </root>
+</configuration>

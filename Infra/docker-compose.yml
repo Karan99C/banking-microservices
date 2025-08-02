@@ -1,0 +1,269 @@
+services:
+  prometheus:
+    image: prom/prometheus
+    container_name: prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - "./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml"
+    networks:
+      - my-network
+
+
+  grafana:
+    image: grafana/grafana
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    networks:
+      - my-network
+
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.4.4
+    container_name: zookeeper
+    ports:
+      - "2181:2181"
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    networks:
+      - my-network
+
+  kafka:
+    image: confluentinc/cp-kafka:7.4.4
+    container_name: kafka
+    ports:
+      - "9092:9092"
+    depends_on:
+      - zookeeper
+
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      ALLOW_PLAINTEXT_LISTENER: yes
+    networks:
+      - my-network
+
+  mysql:
+    image: mysql:8.0
+    container_name: mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+#      MYSQL_DATABASE: transactiondb
+    ports:
+      - "3307:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+#    volumes:
+#      - ../Infra/mysql-init/init.sql:/docker-entrypoint-initdb.d
+
+    networks:
+      - my-network
+
+  db-init:
+    image: mysql:8.0
+    container_name: db-init
+    depends_on:
+      - mysql
+    entrypoint: >
+      bash -c "
+        echo 'Waiting for MySQL...';
+        for i in {1..30}; do
+          if mysql -h mysql -uroot -proot -e 'SELECT 1'; then
+            break;
+          fi
+          echo 'Retrying...';
+          sleep 2;
+        done
+        echo 'Creating databases...';
+        mysql -h mysql -uroot -proot -e '
+          CREATE DATABASE IF NOT EXISTS customerdb;
+          CREATE DATABASE IF NOT EXISTS transactiondb;
+          CREATE DATABASE IF NOT EXISTS rewarddb;
+        '
+      "
+
+    networks:
+      - my-network
+
+
+
+  otel-collector:
+    image: otel/opentelemetry-collector:latest
+    container_name: otel-collector
+    ports:
+      - "4319:4318"
+    volumes:
+      - D:\ProgramsUser\IntelliJ\workpalces\Banking\Infra\otel-config.yml:/etc/otel/config.yml
+    command: [ "--config", "/etc/otel/config.yml" ]
+    networks:
+      - my-network
+
+
+  customer-service:
+    container_name: customer-service
+    build:
+      context: ../customer-service
+      dockerfile: Dockerfile
+    ports:
+      - "8181:8081"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/customerdb
+      SPRING_DATASOURCE_USERNAME: root
+      SPRING_DATASOURCE_PASSWORD: root
+
+    #      SPRING_DATASOURCE_URL: ${SPRING_DATASOURCE_URL}
+#      SPRING_DATASOURCE_USERNAME: ${SPRING_DATASOURCE_USERNAME}
+#      SPRING_DATASOURCE_PASSWORD: ${SPRING_DATASOURCE_PASSWORD}
+#    env_file:
+#      - ../customer-service/.env
+    networks:
+      - my-network
+
+    depends_on:
+      - mysql
+      - kafka
+      - service-registry
+
+  transaction-service:
+    container_name: transaction-service
+    build:
+      context: ../transaction-service
+      dockerfile: Dockerfile
+    ports:
+      - "8182:8082"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/transactiondb
+      SPRING_DATASOURCE_USERNAME: root
+      SPRING_DATASOURCE_PASSWORD: root
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+    depends_on:
+      - kafka
+      - mysql
+    networks:
+      - my-network
+
+
+  reward-service:
+    build:
+      context: ../reward-service
+      dockerfile: Dockerfile
+    container_name: reward-service
+    ports:
+      - "8183:8083"
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_GROUP_ID: reward-group
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/rewarddb
+      SPRING_DATASOURCE_USERNAME: root
+      SPRING_DATASOURCE_PASSWORD: root
+    networks:
+      - my-network
+    depends_on:
+      - kafka
+      - mysql
+
+  notification-service:
+    container_name: notification-service
+    build:
+      context: ../notification-service
+      dockerfile: Dockerfile
+    ports:
+      - "8184:8084"
+    env_file:
+      - ../notification-service/.env
+    networks:
+      - my-network
+    depends_on:
+      - kafka
+
+  gateway-service:
+    build:
+      context: ../gateway-service
+      dockerfile: Dockerfile
+    container_name: gateway-service
+    ports:
+      - "8185:8085"
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      EUREKA_CLIENT_SERVICE_URL_DEFAULTZONE: http://service-registry:8761/eureka
+    networks:
+      - my-network
+    depends_on:
+      - otel-collector
+      - service-registry
+
+  preference-service:
+    build:
+      context: ../preference-service
+      dockerfile: Dockerfile
+    container_name: preference-service
+    ports:
+      - "8186:8086"
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_GROUP_ID: preference-group  # Optional, if you're consuming from a group
+    networks:
+      - my-network
+    depends_on:
+      - kafka
+
+
+
+  service-registry:
+    container_name:  service-registry
+    build:
+      context: ../service-registry
+      dockerfile: Dockerfile
+    ports:
+      - "8762:8761"
+#    env_file:
+#      - ../service-registry/.env
+    networks:
+      - my-network
+  #    depends_on:
+  #      - kafka
+  #      - service-registry
+
+#  gateway-service:
+#    build:
+#      context: ./gateway-service
+#    ports:
+#      - "8085:8085"
+#    environment:
+#      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318
+#    networks:
+#      - my-network
+#    depends_on:
+#      - otel-collector
+
+
+#  otel-collector:
+#    image: otel/opentelemetry-collector:latest
+#    ports:
+#      - "4318:4318"
+#    volumes:
+#      - ./infra/otel-config.yml:/etc/otel/config.yml
+#    command: [ "--config", "/etc/otel/config.yml" ]
+#    networks:
+#      - my-network
+
+
+
+
+volumes:
+  mysql-data:
+
+
+networks:
+  my-network:
+    driver: bridge
+
+
+
